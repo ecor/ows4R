@@ -176,6 +176,12 @@ WCSCoverageSummary <- R6Class("WCSCoverageSummary",
       covDescription <- WCSDescribeCoverage$new(capabilities = private$capabilities, op = op, url = private$url, 
                                                 serviceVersion = private$version, coverageId = self$CoverageId, 
                                                 logger = self$loggerType)
+      #exception handling
+      if(covDescription$hasException()){
+        return(covDescription$getException())
+      }
+      
+      #response handling
       xmlObj <- covDescription$getResponse()
       wcsNs <- NULL
       if(all(class(xmlObj) == c("XMLInternalDocument","XMLAbstractDocument"))){
@@ -213,7 +219,6 @@ WCSCoverageSummary <- R6Class("WCSCoverageSummary",
             label = "time", uom = "s", type = "temporal",
             coefficients = des$Domain$temporalDomain$instants
           )                
-          
         }
       }
       
@@ -225,7 +230,8 @@ WCSCoverageSummary <- R6Class("WCSCoverageSummary",
           self$ERROR("No 'srsName' envelope attribute for CRS interpretation")
           return(NULL)
         }
-        srsNameXML <- try(XML::xmlParse(srsName))
+        srsName = gsub("http://", "https://", srsName) #attempt to rewrite http to https
+        srsNameXML <- try(XML::xmlParse(httr::content(httr::GET(srsName),"text")), silent = TRUE)
         if(is(srsNameXML,"try-error")){
           self$ERROR(sprintf("Error during CRS interpretation for srsName = '%s'", srsName))
           return(NULL)
@@ -241,8 +247,9 @@ WCSCoverageSummary <- R6Class("WCSCoverageSummary",
             out_crs <- thecrs
             crsHref <- thecrs$attrs[["xlink:href"]]
             if(!is.null(crsHref)){
+              crsHref = gsub("http://", "https://", crsHref) #attempt to rewrite http to https
               self$INFO(sprintf("Try to parse CRS from '%s'", crsHref))
-              crsXML <- try(XML::xmlParse(crsHref))
+              crsXML <- try(XML::xmlParse(httr::content(httr::GET(crsHref),"text")), silent = TRUE)
               if(is(crsXML, "try-error")){
                 self$ERROR(sprintf("Error during parsing CRS '%s'", crsHref))
                 return(NULL)
@@ -573,18 +580,14 @@ WCSCoverageSummary <- R6Class("WCSCoverageSummary",
                                                format = format, rangesubset = rangesubset, 
                                                gridbaseCRS = gridbaseCRS, gridtype = gridtype, gridCS = gridCS, 
                                                gridorigin = gridorigin, gridoffsets = gridoffsets, ...)
-      resp <- getCoverageRequest$getResponse()
       
-      if(!is(resp, "raw")){
-        hasError <- xmlName(xmlRoot(resp)) == "ExceptionReport"
-        if(hasError){
-          errMsg <- sprintf("Error while getting coverage: %s", xpathSApply(resp, "//ows:ExceptionText", xmlValue))
-          self$ERROR(errMsg)
-          return(NULL)
-        }
+      #exception handling
+      if(getCoverageRequest$hasException()){
+        return(getCoverageRequest$getException())
       }
       
       #response handling
+      resp <- getCoverageRequest$getResponse()
       if(substr(private$version,1,3)=="1.1"){
         #for WCS 1.1, wrap with WCSCoverage object and get data
         namespaces <- OWSUtils$getNamespaces(xmlRoot(resp))
